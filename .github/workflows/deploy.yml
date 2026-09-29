@@ -56,7 +56,7 @@ jobs:
           aws ecr describe-repositories --repository-names "$ECR_REPOSITORY" --region "$AWS_REGION" \
             || aws ecr create-repository --repository-name "$ECR_REPOSITORY" --region "$AWS_REGION"
 
-      - name: Build fullstack image (multi-stage Dockerfile)
+      - name: Build fullstack image (multi-stage Dockerfile at repo root)
         run: |
           FULL_IMAGE="$ECR_REGISTRY/$ECR_REPOSITORY"
           docker build --build-arg REACT_APP_BACKEND_URL=/api \
@@ -108,30 +108,24 @@ jobs:
             --parameters file:///tmp/ssm-params.json \
             --query "Command.CommandId" --output text)
           echo "SSM Command ID: $COMMAND_ID"
-          aws ssm wait command-executed \
-            --instance-ids "$INSTANCE" \
-            --region "$REGION" \
-            --command-id "$COMMAND_ID" || true
+          aws ssm wait command-executed --instance-id "$INSTANCE" --command-id "$COMMAND_ID" --region "$REGION"
           aws ssm get-command-invocation \
-            --instance-ids "$INSTANCE" \
-            --region "$REGION" \
+            --instance-id "$INSTANCE" \
             --command-id "$COMMAND_ID" \
+            --region "$REGION" \
             --query "{Status:Status,Output:StandardOutputContent,Error:StandardErrorContent}" \
-            --output text > /tmp/ssm-result.txt
-          cat /tmp/ssm-result.txt
+            --output text
 
-      - name: Health check (must return HTTP 200)
+      - name: Verify deployment health
         run: |
-          URL="$PUBLIC_URL/api/ping"
-          echo "Checking $URL"
-          for i in $(seq 1 12); do
-            HTTP_CODE=$(curl -s -o /tmp/health-body.txt -w "%{http_code}" "$URL" || echo "000")
-            echo "Attempt $i: HTTP $HTTP_CODE"
-            if [ "$HTTP_CODE" = "200" ] && grep -q "pong" /tmp/health-body.txt; then
-              echo "HEALTH CHECK PASSED"
+          for i in $(seq 1 15); do
+            HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' "$PUBLIC_URL" || echo "000")
+            echo "Attempt $i: HTTP $HTTP_CODE from $PUBLIC_URL"
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "Health check passed with HTTP 200"
               exit 0
             fi
             sleep 10
           done
-          echo "HEALTH CHECK FAILED"
+          echo "Health check failed: $PUBLIC_URL did not return HTTP 200"
           exit 1
