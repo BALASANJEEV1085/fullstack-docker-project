@@ -101,24 +101,28 @@ jobs:
             --parameters file:///tmp/ssm-params.json \
             --query "Command.CommandId" --output text)
           echo "SSM command id: $COMMAND_ID"
-          aws ssm wait command-executed --instance-id "$INSTANCE_ID" --command-id "$COMMAND_ID" --region "$REGION"
-          aws ssm get-command-invocation \
+          aws ssm wait command-executed --instance-id "$INSTANCE_ID" --command-id "$COMMAND_ID"
+          STATUS=$(aws ssm get-command-invocation \
             --instance-id "$INSTANCE_ID" \
             --command-id "$COMMAND_ID" \
             --region "$REGION" \
-            --query "{Status:Status,Output:StandardOutputContent,Error:StandardErrorContent}" \
-            --output text
+            --query "Status" --output text)
+          echo "SSM command status: $STATUS"
+          if [ "$STATUS" != "Success" ]; then
+            echo "Deployment command failed"
+            exit 1
+          fi
 
-      - name: Verify deployment health (HTTP 200)
+      - name: Health check (HTTP 200 required)
         run: |
           for i in $(seq 1 15); do
-            STATUS=$(curl -s -o /tmp/health_body.txt -w "%{http_code}" "$PUBLIC_URL/api/ping" || echo "000")
-            echo "Attempt $i: HTTP $STATUS"
-            if [ "$STATUS" = "200" ]; then
-              echo "Health check passed: $(cat /tmp/health_body.txt)"
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" "$PUBLIC_URL/api/ping" || true)
+            echo "Attempt $i: /api/ping returned HTTP $CODE"
+            if [ "$CODE" = "200" ]; then
+              echo "Health check passed"
               exit 0
             fi
             sleep 10
           done
-          echo "Health check failed against $PUBLIC_URL/api/ping"
+          echo "Health check failed: no HTTP 200 from $PUBLIC_URL/api/ping"
           exit 1
