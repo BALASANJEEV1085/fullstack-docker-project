@@ -12,6 +12,7 @@ env:
   IMAGE_TAG: latest
   INSTANCE_ID: i-07e7a00d63a659dff
   PUBLIC_URL: http://3.7.216.93
+  CONTAINER_PORT: "80"
 
 jobs:
   test:
@@ -22,7 +23,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.16'
+          go-version: '1.15'
           cache-dependency-path: backend/go.sum
 
       - name: Run backend tests
@@ -49,6 +50,11 @@ jobs:
           PASSWORD=$(aws ecr get-login-password --region "$AWS_REGION")
           echo "::add-mask::$PASSWORD"
           echo "$PASSWORD" | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+
+      - name: Ensure ECR repository exists
+        run: |
+          aws ecr describe-repositories --repository-names "$ECR_REPOSITORY" --region "$AWS_REGION" \
+            || aws ecr create-repository --repository-name "$ECR_REPOSITORY" --region "$AWS_REGION"
 
       - name: Build fullstack image (multi-stage Dockerfile)
         run: |
@@ -82,7 +88,7 @@ jobs:
           REGION="$AWS_REGION"
           ECR_REGISTRY_VAL="$ECR_REGISTRY"
           IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
-          cat > /tmp/ssm-params.json << SSMPARAMS
+          cat > /tmp/ssm-params.json << 'SSMPARAMS'
           {
             "commands": [
               "aws ecr get-login-password --region ${REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY_VAL}",
@@ -101,28 +107,22 @@ jobs:
             --parameters file:///tmp/ssm-params.json \
             --query "Command.CommandId" --output text)
           echo "SSM command id: $COMMAND_ID"
-          aws ssm wait command-executed --instance-id "$INSTANCE_ID" --command-id "$COMMAND_ID"
-          STATUS=$(aws ssm get-command-invocation \
-            --instance-id "$INSTANCE_ID" \
+          aws ssm wait command-executed \
             --command-id "$COMMAND_ID" \
-            --region "$REGION" \
-            --query "Status" --output text)
-          echo "SSM command status: $STATUS"
-          if [ "$STATUS" != "Success" ]; then
-            echo "Deployment command failed"
-            exit 1
-          fi
+            --instance-id "$INSTANCE_ID" \
+            --region "$REGION"
 
-      - name: Wait for container health
+      - name: Verify deployment health (HTTP 200 required)
         run: |
-          for i in $(seq 1 12); do
-            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$PUBLIC_URL/api/ping" || true)
-            echo "Attempt $i: health endpoint returned $HTTP_CODE"
-            if [ "$HTTP_CODE" = "200" ]; then
-              echo "Health check passed with HTTP 200"
+          for i in $(seq 1 15); do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" "$PUBLIC_URL/api/ping" || true)
+            echo "Attempt $i: HTTP $CODE from $PUBLIC_URL/api/ping"
+            if [ "$CODE" = "200" ]; then
+              echo "Health check passed (200)"
+              curl -s "$PUBLIC_URL/api/ping"
               exit 0
             fi
             sleep 10
           done
-          echo "Health check failed: $PUBLIC_URL did not return HTTP 200"
+          echo "Health check failed: /api/ping never returned 200"
           exit 1
