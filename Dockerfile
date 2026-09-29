@@ -30,8 +30,7 @@ RUN npm run build
 
 FROM nginx:alpine AS runtime
 
-RUN apk add --no-cache go-init && \
-    mkdir -p /run/nginx /etc/nginx/http.d /etc/nginx/conf.d /usr/src/app /var/lib/nginx
+RUN mkdir -p /run/nginx /etc/nginx/http.d /etc/nginx/conf.d /usr/src/app /var/lib/nginx
 
 WORKDIR /usr/src/app
 
@@ -39,7 +38,7 @@ COPY --from=backend-builder /usr/src/app/server /usr/src/app/server
 
 COPY --from=frontend-builder /usr/src/app/build /usr/share/nginx/html
 
-COPY nginx.conf /etc/nginx/nginx.conf
+COPY nginx.prod.conf /etc/nginx/nginx.conf
 
 RUN printf 'server {\n\
     listen 80;\n\
