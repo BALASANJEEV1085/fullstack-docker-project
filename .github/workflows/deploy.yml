@@ -108,25 +108,30 @@ jobs:
             --parameters file:///tmp/ssm-params.json \
             --query "Command.CommandId" --output text)
           echo "SSM Command ID: $COMMAND_ID"
-          aws ssm wait command-executed --instance-id "$INSTANCE" --command-id "$COMMAND_ID" --region "$REGION" || true
-          aws ssm get-command-invocation \
-            --instance-id "$INSTANCE" \
-            --command-id "$COMMAND_ID" \
+          aws ssm wait command-executed \
+            --instance-ids "$INSTANCE" \
             --region "$REGION" \
-            --query "{Status:Status,Output:Output,Error:StandardErrorContent}" \
-            --output text
+            --command-id "$COMMAND_ID" || true
+          aws ssm get-command-invocation \
+            --instance-ids "$INSTANCE" \
+            --region "$REGION" \
+            --command-id "$COMMAND_ID" \
+            --query "{Status:Status,Output:StandardOutputContent,Error:StandardErrorContent}" \
+            --output text > /tmp/ssm-result.txt
+          cat /tmp/ssm-result.txt
 
-      - name: Verify deployment (health check)
+      - name: Health check (must return HTTP 200)
         run: |
-          echo "Waiting for application to come up at $PUBLIC_URL ..."
-          for i in $(seq 1 20); do
-            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$PUBLIC_URL" || true)
-            if [ "$HTTP_CODE" = "200" ]; then
-              echo "Health check passed with HTTP $HTTP_CODE"
+          URL="$PUBLIC_URL/api/ping"
+          echo "Checking $URL"
+          for i in $(seq 1 12); do
+            HTTP_CODE=$(curl -s -o /tmp/health-body.txt -w "%{http_code}" "$URL" || echo "000")
+            echo "Attempt $i: HTTP $HTTP_CODE"
+            if [ "$HTTP_CODE" = "200" ] && grep -q "pong" /tmp/health-body.txt; then
+              echo "HEALTH CHECK PASSED"
               exit 0
             fi
-            echo "Attempt $i: got HTTP $HTTP_CODE, retrying in 15s..."
-            sleep 15
+            sleep 10
           done
-          echo "Health check failed: did not receive HTTP 200 from $PUBLIC_URL"
+          echo "HEALTH CHECK FAILED"
           exit 1
