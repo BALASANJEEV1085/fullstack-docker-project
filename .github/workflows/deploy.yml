@@ -113,16 +113,16 @@ jobs:
             exit 1
           fi
 
-      - name: Health check (HTTP 200 required)
+      - name: Wait for container health
         run: |
-          for i in $(seq 1 15); do
-            CODE=$(curl -s -o /dev/null -w "%{http_code}" "$PUBLIC_URL/api/ping" || true)
-            echo "Attempt $i: /api/ping returned HTTP $CODE"
-            if [ "$CODE" = "200" ]; then
-              echo "Health check passed"
+          for i in $(seq 1 12); do
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$PUBLIC_URL/api/ping" || true)
+            echo "Attempt $i: health endpoint returned $HTTP_CODE"
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "Health check passed with HTTP 200"
               exit 0
             fi
             sleep 10
           done
-          echo "Health check failed: no HTTP 200 from $PUBLIC_URL/api/ping"
+          echo "Health check failed: $PUBLIC_URL did not return HTTP 200"
           exit 1
